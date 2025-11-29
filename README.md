@@ -1,86 +1,69 @@
 # Visualisatie met Grafana: oefeningen
 
+![Grafana dashboard](images/grafana-dashboard.png)
+
 ## Setup
 
-1. Ga in een Command prompt naar de folder waarin deze README staat.
+1. Clone deze repository
 
-> Tip: nog twee extra manieren om een command prompt in een bepaalde folder te openen vanuit Verkenner:
-> 1. in Verkenner/Explorer, druk Shift in terwijl je rechtsklikt op een leeg deel van de folder. Kies dan 'open in Terminal'
-> 2. ga in Verkenner/Explorer naar de navigatiebalk en vervang alles door 'cmd'
+2. Open deze folder (`infm-grafana`) in VS Code
 
-2. Start alle Docker containers via
-`docker compose up --build` in de folder van deze README. Dit start 5 containers die met mekaar communiceren, namelijk Grafana en de 4 containers uit de time series oefeningen (Dummy datasource, mosquitto, telegraf, en influxdb).
+3. Open een terminal
 
-> Als je later opnieuw wil beginnen,
-> - stop je alles (Ctrl-C)
-> - verwijder je de folder `influxdb2_data` en `grafana_data` die aangemaakt werden
-> - start je alles opnieuw (`docker compose up`)
+4. Start de Docker containers met `docker compose up --build`.
 
-3. Ga naar Grafana: [http://localhost:3000](http://localhost:3000) en login met `admin`/`admin`. Grafana vraagt om het wachtwoord te wijzigen; dat kan je overslaan met 'Skip'.
+    > Krijg je een foutmelding ivm `initial_sync`? Update je Docker-installatie naar de laatste versie.
 
+Er worden 3 Docker containers opgezet:
 
-4. Voeg InfluxDB als databron toe: ga naar 'Connections' > 'Add new connection'. Kies 'InfluxDB' als type. Klik op 'Add new data source'. Gebruik volgende configuratie:
-    - Query language: Flux
-    - URL: http://influxdb:8086
-    - Basic auth: uit
-    - Organization: infm
-    - Token: admintoken
-    - Default bucket: timeseries
+- Grafana ([http://localhost:3000](http://localhost:3000))
+- InfluxDB ([http://localhost:8086](http://localhost:8086))
+- plcsim (een eenvoudige simulator die data van een boiler rechtstreeks wegschrijft in InfluxDB).
 
-## Oefeningen
+## Opgaven
 
-### Oefening 1
+1. Ga naar Grafana ([http://localhost:3000](http://localhost:3000)).
+Log in met gebruikersnaam `admin` en wachtwoord `admin`. (Het aanpassen van het wachtwoord kan je overslaan).
 
-Maak een nieuw dashboard en een visualisatie-panel. Gebruik influxdb als databron, en geef volgende query in:
-```flux
-from(bucket: "timeseries")
-|> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-|> filter(fn: (r) => r.deviceid == "water_temp_sensor_01")
-```
-om alle sensordata te visualiseren.
+2. Voeg een nieuwe InfluxDB data source toe met volgende configuratie-parameters:
 
-Merk op: in plaats van een start- en stoptijd op te geven, gebruiken we de variabelen `v.timeRangeStart` en `v.timeRangeStop`. Die worden automatisch gezet op wat in de Grafana-interface gekozen wordt door de gebruiker (bv. de laatste 5 minuten).
+   - query language `InfluxQL`
+   - URL `http://influxdb:8086`
+   - Database `timeseries`
+   - User `admin`
+   - Password `password`
 
-Zet rechts bovenaan de tijd op 'Last 5 minutes'. Druk rechtsbovenaan op `Refresh` indien je geen grafiek ziet.
+3. Maak een nieuw dashboard, en voeg een visualisatie toe van **het gemiddelde waterniveau**. Voeg (met behulp van thresholds) ook lijnen toe die het gewenste niveau (tussen 30 en 70 liter) aangeven.
 
-### Oefening 2
+   ![Watertank history](images/grafana-waterlevel-history.png)
 
-Verken de opties in het rechterpaneel.
-- Speel bijvoorbeeld eens met de 'Fill opacity', 'Gradient mode', .... om de grafiek onder de lijn op te vullen.
-- Voeg een unit (Celcius) toe aan de meetwaarden.
-- Verander de naam in de legende
-- Zet het kleurenschema op 'From thresholds (by value)'. Wat doet dit? Waar kan je de thresholds wijzigen?
+4. Voeg een Gauge-visualisatie toe van het **huidige (laatste) waterniveau**.
 
-Bewaar je dashboard. 
+5. Verander de stijl hiervan zodat die er als volgt uitziet:
 
-### Oefening 3
+   ![Watertank](images/grafana-watertank.png)
 
-Voeg nog een visualisatie-paneel toe. Verken de andere types grafieken.
+6. Voeg een grafiek toe die de gemiddelde *flow rate* (in liter/minuut) weergeeft van de tank, berekend per periode van 10 seconden.
+   > Hint: deze data komt niet rechtstreeks uit de database. Gebruik de `DERIVATIVE` functie van InfluxQL om deze te berekenen. (De tijd-parameter van de DERIVATIVE-functie is de tijdseenheid voor de berekende rate, hier *per minuut* dus `1m`).
 
-Probeer bijvoorbeeld eens een 'State timeline' uit, die aangeeft wat de toestand van de actuatoren is.
-Je kan volgende query gebruiken:
-```flux
-from(bucket: "timeseries")
-|> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-|> filter(fn: (r) => r.type == "actuator")
-```
+   Maak de grafiek zo duidelijk mogelijk (bv. eenheden, verschillende kleur voor positieve en negatieve waarden). Dat laatste kan je doen door de gradient mode op 'Scheme' te zetten, en als color scheme 'From thresholds' te kiezen, en de thresholds geschikt in te stellen.
 
-Wat visualiseer je hier?
+   ![Flow rate](images/grafana-flowrate.png)
 
-### Oefening 4
+7. Voeg een visualisatie toe van de meest recente toestand van de inlet en outlet. De toestand wordt in de data weergegeven als 0 of 1 (voor closed resp. open).
+   
+   > Hint: gebruik een Stat-element. De achtergrondkleur kan je dynamisch maken door 'Color mode' op 'Background color' te zetten. De tekst en kleuren kan je instellen via een value mapping.
 
-De kleuren van de visualisatie uit oefening 3 zijn niet heel duidelijk.
-Dit kan je aanpassen via de 'Value mappings'.
-Voeg een mapping toe die een andere kleur toekent aan de waadrden 'on' en 'off'. Doe hetzelfde voor 'open' en 'closed'.
+   ![Inlet/Outlet](images/grafana-inlet-outlet.png)
 
-### Oefening 5
+8. Voeg een 'State graph' toe met de geschiedenis van de inlet- en outlet-toestand.
 
-Ook de labels van de actuatoren zijn niet heel duidelijk.
-Je kan die vervangen bij de 'Display name'.
-We kunnen niet gewoon 1 string ingeven, omdat de naam verschilt per actuator.
-Je kan daarom de speciale waarde `${__field.labels.deviceid}` gebruiken.
-Dat vervangt de naam door de waarde van het deviceid label.
+   ![State graph](images/grafana-stategraph.png)
 
-### Oefening 6
-Bewaar ook je paneel uit oefening 5. Ga terug naar het dashboard om beide visualisaties samen te zien.
-Zet auto refresh aan.
+9. (extra) Voeg op het dashboard nog extra grafieken toe voor
+
+   - de huidige watertemperatuur
+   - het verloop van de watertemperatuur
+   - de toestand van de brander
+
+   Experimenteer met de verschillende opties om deze grafieken zo duidelijk mogelijk te maken.

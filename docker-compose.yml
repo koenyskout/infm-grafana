@@ -1,3 +1,4 @@
+name: infm-grafana-oefening
 services:
   influxdb:
     image: influxdb:2
@@ -9,50 +10,27 @@ services:
       - DOCKER_INFLUXDB_INIT_PASSWORD=password
       - DOCKER_INFLUXDB_INIT_ORG=infm
       - DOCKER_INFLUXDB_INIT_BUCKET=timeseries
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=admintoken
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=password
     volumes:
-      - "./influxdb2_data/config:/etc/influxdb2"
-      - "./influxdb2_data/data:/var/lib/influxdb2"
-
-  dummy_datasource:
-    build: dummy_datasource
-    depends_on:
-      - mosquitto
-    environment:
-      - MQTT_BROKER_HOST=mosquitto
-      - MQTT_BROKER_PORT=1883
-  
-  mosquitto:
-    image: eclipse-mosquitto
-    ports:
-      - "1883:1883"
-      - "9001:9001"
-    volumes:
-      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
-
-  telegraf:
-    image: telegraf:latest
-    depends_on:
-      - influxdb
-      - mosquitto
-    environment:
-      - INFLUX_TOKEN=admintoken
-    volumes:
-      - ./telegraf.conf:/etc/telegraf/telegraf.conf:ro
+      - "./data/influxdb2_data/config:/etc/influxdb2"
+      - "./data/influxdb2_data/data:/var/lib/influxdb2"
 
   grafana:
     image: grafana/grafana:latest
-    volumes:
-      - ./grafana_data:/var/lib/grafana
     ports:
-      - 3000:3000
+      - "3000:3000"   # Grafana web interface
+    volumes:
+      - ./data/grafana:/var/lib/grafana
+    restart: unless-stopped
+
+  plc-sim:
+    build: ./plc-sim
     depends_on:
       - influxdb
-      
-  # Deze container kan je gebruiken als GUI voor de MQTT server
-  # mqttx:
-  #   image: emqx/mqttx-web
-  #   depends_on:
-  #     - mosquitto
-  #   ports:
-  #     - "8080:80"
+    restart: unless-stopped
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./plc-sim
+          target: /usr/src/app
+          initial_sync: true

@@ -1,29 +1,14 @@
-import paho.mqtt.client as mqtt
-import json
+
 import time
 import random
+import http.client
 
-# MQTT Broker Configuration
-MQTT_BROKER = "mosquitto"
-MQTT_PORT = 1883
-
-
-# MQTT Client
-class MQTTClient:
-    def __init__(self, broker, port):
-        self.client = mqtt.Client()
-        self.client.on_connect = self.on_connect
-        self.client.connect(broker, port, 60)
-
-    def on_connect(self, client, userdata, flags, rc):
-        print(f"Connected to MQTT broker with code {rc}")
-
-    def publish(self, topic, payload):
-        self.client.publish(topic, json.dumps(payload))
-
-    def loop(self):
-        self.client.loop_start()
-
+# InfluxDB Configuration
+INFLUXDB_HOST = "influxdb"
+INFLUXDB_PORT = 8086
+INFLUXDB_ORG = "infm"
+INFLUXDB_BUCKET = "timeseries"
+INFLUXDB_TOKEN = "password"
 
 # Water Level Sensor
 class WaterLevelSensor:
@@ -115,7 +100,7 @@ class PLCLogic:
         # Outlet valve control
         if current_temp >= self.target_temp:
             self.outlet_valve.open()
-        else:
+        if current_level <= self.min_level:
             self.outlet_valve.close()
 
         self.__simulate_physics_step()
@@ -123,20 +108,20 @@ class PLCLogic:
 
     def __simulate_physics_step(self):
         if self.inlet_valve.state == "open":
-            delta_level = random.uniform(2.0, 3.0)
+            delta_level = random.uniform(0.2, 0.3)
             self.water_sensor.update_level(delta_level)  # inlet valve increases water level
             
-            delta_temperature = -random.uniform(1.0, 5.0)
+            delta_temperature = -random.uniform(0.1, 0.2)
             self.temp_sensor.update_temperature(delta_temperature) # inlet valve adds cool water
 
         if self.outlet_valve.state == "open":
-            self.water_sensor.update_level(-random.uniform(2.0, 3.0))  # outlet valve drains water
+            self.water_sensor.update_level(-random.uniform(0.2, 0.3))  # outlet valve drains water
         
         if self.heater.state == "on":
-            delta_temperature = random.uniform(3.0, 3.5)
+            delta_temperature = random.uniform(0.7, 1.0)
             self.temp_sensor.update_temperature(delta_temperature)  # Heater warms water
         else:
-            delta_temperature = -random.uniform(1.0, 2.0)
+            delta_temperature = -random.uniform(0.04, 0.05)
             self.temp_sensor.update_temperature(delta_temperature)  # Water slowly cools if not heated
 
 
@@ -159,9 +144,7 @@ def simulation_loop():
         max_level=70.0,
         target_temp=80.0,
     )
-    mqtt_client = MQTTClient(MQTT_BROKER, MQTT_PORT)
-    mqtt_client.loop()
-
+    
     # Simulation loop
     while True:
         site = "site1"
@@ -169,26 +152,31 @@ def simulation_loop():
         # Update PLC logic
         plc.process()
 
-        # Publish sensor data
-        mqtt_client.publish(f"factory/{site}/sensor/{water_sensor.sensor_id}/water_level", {
-            "value": water_sensor.measure(),
-            "unit": "cm",
-        })
-        mqtt_client.publish(f"factory/{site}/sensor/{temp_sensor.sensor_id}/temperature", {
-            "value": temp_sensor.measure(),
-            "unit": "°C",
-        })
+        # Store in InfluxDB (line protocol)
+        influx_data = f"boiler,sensor_id={water_sensor.sensor_id},site={site} water_level={water_sensor.measure()}\n"
+        influx_data += f"boiler,sensor_id={temp_sensor.sensor_id},site={site} water_temperature={temp_sensor.measure()}\n"
+        influx_data += f"boiler,actuator_id={inlet_valve.actuator_id},site={site} inlet_valve_state={1 if inlet_valve.state == 'open' else 0 }\n"
+        influx_data += f"boiler,actuator_id={outlet_valve.actuator_id},site={site} outlet_valve_state={1 if outlet_valve.state == 'open' else 0 }\n"
+        influx_data += f"boiler,actuator_id={heater.actuator_id},site={site} heater_state={1 if heater.state == 'on' else 0 }\n"
 
-        # Publish actuator statuses
-        mqtt_client.publish(f"factory/{site}/actuator/{inlet_valve.actuator_id}/status", {
-            "state": inlet_valve.state,
-        })
-        mqtt_client.publish(f"factory/{site}/actuator/{outlet_valve.actuator_id}/status", {
-            "state": outlet_valve.state,
-        })
-        mqtt_client.publish(f"factory/{site}/actuator/{heater.actuator_id}/status", {
-            "state": heater.state,
-        })
+        # Here you would send influx_data to InfluxDB using HTTP API
+        connection = None
+        try:
+            connection = http.client.HTTPConnection(INFLUXDB_HOST, INFLUXDB_PORT, timeout=5)
+            connection.request("POST", f"/api/v2/write?org={INFLUXDB_ORG}&bucket={INFLUXDB_BUCKET}", influx_data, {"Content-Type": "text/plain", "Authorization": f"Token {INFLUXDB_TOKEN}"})
+            response = connection.getresponse()
+            response.read()  # drain response to allow connection reuse
+            if response.status >= 300:
+                print(f"InfluxDB write failed: {response.status} {response.reason}")
+        except Exception as exc:
+            print(f"Error writing to InfluxDB: {exc}")
+        finally:
+            try:
+                if connection:
+                    connection.close()
+            except Exception:
+                pass
+
 
         # Wait 1 second
         time.sleep(1)
